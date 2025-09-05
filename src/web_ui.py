@@ -23,7 +23,11 @@ def chat_fn(history: List[Tuple[str, str]], question: str, speaker: str):
 
 def upload_fn(files: List[gr.File]) -> Tuple[gr.Dropdown, str]:
     for file in files:
-        text = load_text(file.name)
+        try:
+            text = load_text(file.name)
+        except ValueError:
+            # Skip files with unsupported extensions
+            continue
         parsed = parse_speakers(text)
         for sp, segs in parsed.items():
             existing = rag.corpora.get(sp, [])
@@ -50,7 +54,10 @@ with gr.Blocks() as demo:
         msg = gr.Textbox(label='Your question')
         msg.submit(chat_fn, [chatbot, msg, speaker_dd], [chatbot, msg])
     with gr.Tab('Documents'):
-        file_input = gr.File(file_types=['text', 'docx'], file_count='multiple', label='Upload documents')
+        # Gradio 4 does not recognise ``docx`` in ``file_types``. Allow any
+        # file to be uploaded and rely on ``load_text`` to filter by
+        # extension instead.
+        file_input = gr.File(file_types=['file'], file_count='multiple', label='Upload documents')
         upload_btn = gr.Button('Add to database')
         speakers_box = gr.Textbox(label='Known speakers', interactive=False)
         upload_btn.click(upload_fn, [file_input], [speaker_dd, speakers_box])
