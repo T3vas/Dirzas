@@ -163,7 +163,11 @@ def main() -> None:
         raise ValueError(f"Speaker '{args.speaker}' not found")
 
     segments = rag.retrieve(args.speaker, args.query, args.top_k)
-    prompt = '\n\n'.join(segments) + f"\n\nQuestion: {args.query}"
+    context = '\n\n'.join(segments)
+    prompt = (
+        f"Use the following context from {args.speaker} to answer the question.\n\n"
+        f"Context:\n{context}\n\nQuestion: {args.query}\nAnswer:"
+    )
 
     if args.dry_run:
         print('Retrieved context:\n' + prompt)

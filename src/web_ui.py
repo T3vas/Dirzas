@@ -29,7 +29,11 @@ def chat_fn(history: List[Tuple[str, str]], question: str, speaker: str):
         history.append((question, f"Speaker '{speaker}' not found"))
         return history, ''
     segments = rag.retrieve(speaker, question)
-    prompt = '\n\n'.join(segments) + f"\n\nQuestion: {question}"
+    context = '\n\n'.join(segments)
+    prompt = (
+        f"Use the following context from {speaker} to answer the question.\n\n"
+        f"Context:\n{context}\n\nQuestion: {question}\nAnswer:"
+    )
     answer = call_ollama(model=model_name, prompt=prompt, url=ollama_url)
     history.append((question, answer))
     return history, ''
