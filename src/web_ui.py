@@ -1,12 +1,25 @@
 from typing import List, Tuple
 
 import gradio as gr
+import json
+from pathlib import Path
 
 from rag_speaker import SpeakerRAG, load_text, parse_speakers, call_ollama
 
 rag = SpeakerRAG()
-ollama_url = 'http://localhost:11434/api/generate'
-model_name = 'phi4'
+
+DEFAULT_URL = 'http://localhost:11434/api/generate'
+DEFAULT_MODEL = 'phi4'
+CONFIG_PATH = Path(__file__).resolve().parent.parent / 'settings.json'
+
+ollama_url = DEFAULT_URL
+model_name = DEFAULT_MODEL
+
+if CONFIG_PATH.exists():
+    with CONFIG_PATH.open('r', encoding='utf-8') as f:
+        data = json.load(f)
+        ollama_url = data.get('ollama_url', DEFAULT_URL)
+        model_name = data.get('model_name', DEFAULT_MODEL)
 
 def chat_fn(history: List[Tuple[str, str]], question: str, speaker: str):
     if not speaker:
@@ -44,6 +57,8 @@ def save_settings(url: str, model: str) -> str:
     global ollama_url, model_name
     ollama_url = url
     model_name = model
+    with CONFIG_PATH.open('w', encoding='utf-8') as f:
+        json.dump({'ollama_url': ollama_url, 'model_name': model_name}, f)
     return 'Settings saved'
 
 with gr.Blocks() as demo:
