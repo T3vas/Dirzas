@@ -99,6 +99,14 @@ class SpeakerRAG:
 
 
 def call_ollama(model: str, prompt: str, url: str = 'http://localhost:11434/api/generate') -> str:
+    """Call the Ollama API and return the concatenated response text.
+
+    Ollama streams multiple JSON objects separated by newlines.  The previous
+    implementation attempted to ``json.loads`` the entire payload at once and
+    failed with ``Extra data`` errors.  Here we parse each line individually and
+    join the ``response`` fragments.
+    """
+
     try:
         data = json.dumps({'model': model, 'prompt': prompt}).encode('utf-8')
         req = Request(
@@ -108,9 +116,21 @@ def call_ollama(model: str, prompt: str, url: str = 'http://localhost:11434/api/
         )
         with urlopen(req, timeout=30) as resp:
             raw = resp.read().decode('utf-8')
-        print(raw)
-        result = json.loads(raw)
-        return result.get('response', '')
+
+        parts: List[str] = []
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if 'response' in obj:
+                parts.append(obj['response'])
+            if obj.get('done'):
+                break
+        return ''.join(parts)
     except Exception as exc:
         return f"[Ollama error: {exc}]"
 
