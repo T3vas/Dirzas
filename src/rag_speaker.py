@@ -93,11 +93,11 @@ class SpeakerRAG:
         return [self.corpora[speaker][i] for i in ranked[:top_k]]
 
 
-def call_ollama(model: str, prompt: str) -> str:
+def call_ollama(model: str, prompt: str, url: str = 'http://localhost:11434/api/generate') -> str:
     try:
         data = json.dumps({'model': model, 'prompt': prompt}).encode('utf-8')
         req = Request(
-            'http://localhost:11434/api/generate',
+            url,
             data=data,
             headers={'Content-Type': 'application/json'},
         )
