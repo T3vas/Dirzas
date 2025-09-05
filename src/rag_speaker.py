@@ -47,11 +47,11 @@ def cosine_similarity(a: Counter, b: Counter) -> float:
 def parse_speakers(text: str) -> Dict[str, List[str]]:
     """Split transcript text into segments grouped by speaker.
 
-    The function recognises lines where a speaker name (all caps) is
-    followed by either a colon or a period, for example::
+    The function recognises lines where a speaker name is followed by
+    either a colon or a period, for example::
 
-        PIRMININKAS: Sveiki.
-        V. ALEKNAVIČIENĖ (LSDPF*). Labas.
+        Alice: Sveiki.
+        PIRMININKAS (S. SKVERNELIS). Labas.
 
     ``parse_speakers`` is careful not to split inside initials such as
     ``V. ALEKNAVIČIENĖ`` by selecting the first ``:`` or ``.`` whose
@@ -68,7 +68,13 @@ def parse_speakers(text: str) -> Dict[str, List[str]]:
         for match in re.finditer(r"[\.:]", line):
             speaker = line[:match.start()].strip()
             remainder = line[match.end():].strip()
-            if speaker and speaker.isupper() and not speaker[0].isdigit():
+            # ``parse_speakers`` previously required the speaker label to be in
+            # all caps, which caused the entire transcript to be assigned to the
+            # first uppercase speaker whenever names appeared in mixed or
+            # lowercase.  This resulted in queries retrieving context from every
+            # speaker instead of just the selected one.  Accept any name that
+            # starts with a non-digit character instead.
+            if speaker and not speaker[0].isdigit():
                 words = remainder.split()
                 if words and words[0].isupper():
                     # Likely an initial, keep searching
