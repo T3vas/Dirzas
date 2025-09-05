@@ -73,8 +73,10 @@ def parse_speakers(text: str) -> Dict[str, List[str]]:
             # first uppercase speaker whenever names appeared in mixed or
             # lowercase.  This resulted in queries retrieving context from every
             # speaker instead of just the selected one.  Accept any name that
-            # starts with a non-digit character instead.
-            if speaker and not speaker[0].isdigit():
+            # starts with a non-digit character instead, but only if there is
+            # actual text after the delimiter.  Otherwise regular sentences like
+            # ``Sveiki atvykę į posėdį.`` would be treated as speaker names.
+            if speaker and remainder and not speaker[0].isdigit():
                 words = remainder.split()
                 if words and words[0].isupper():
                     # Likely an initial, keep searching
