@@ -33,12 +33,12 @@ def upload_fn(files: List[gr.File]) -> Tuple[gr.Dropdown, str]:
             existing = rag.corpora.get(sp, [])
             rag.add_speaker(sp, existing + segs)
     speakers = list(rag.corpora.keys())
-    return gr.Dropdown.update(choices=speakers), ', '.join(speakers)
+    return gr.Dropdown(choices=speakers), ', '.join(speakers)
 
 def clear_db() -> Tuple[gr.Dropdown, str]:
     rag.corpora.clear()
     rag.tokens.clear()
-    return gr.Dropdown.update(choices=[]), 'Database cleared'
+    return gr.Dropdown(choices=[]), 'Database cleared'
 
 def save_settings(url: str, model: str) -> str:
     global ollama_url, model_name
