@@ -107,7 +107,9 @@ def call_ollama(model: str, prompt: str, url: str = 'http://localhost:11434/api/
             headers={'Content-Type': 'application/json'},
         )
         with urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
+            raw = resp.read().decode('utf-8')
+        print(raw)
+        result = json.loads(raw)
         return result.get('response', '')
     except Exception as exc:
         return f"[Ollama error: {exc}]"
