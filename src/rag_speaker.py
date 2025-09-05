@@ -44,17 +44,36 @@ def cosine_similarity(a: Counter, b: Counter) -> float:
 
 
 def parse_speakers(text: str) -> Dict[str, List[str]]:
-    pattern = re.compile(r"^([A-Za-z0-9_]+):\s*(.*)$")
+    """Split transcript text into segments grouped by speaker.
+
+    The function recognises lines where a speaker name (all caps) is
+    followed by either a colon or a period, for example::
+
+        PIRMININKAS: Sveiki.
+        V. ALEKNAVIČIENĖ (LSDPF*). Labas.
+
+    Everything until the final ``:`` or ``.`` is treated as the speaker
+    name, which allows names containing dots, spaces or parentheses. Lines
+    that do not match this pattern are appended to the current speaker's
+    last segment.
+    """
+
+    pattern = re.compile(r"^(.*)[\.:]\s*(.*)$")
     speakers: Dict[str, List[str]] = {}
     current = None
-    for line in text.splitlines():
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
         match = pattern.match(line)
         if match:
-            current = match.group(1)
-            speakers.setdefault(current, []).append(match.group(2))
-        else:
-            if current:
-                speakers[current][-1] += ' ' + line.strip()
+            speaker = match.group(1).strip()
+            remainder = match.group(2).strip()
+            # Accept only all–caps names to avoid matching timestamps etc.
+            if speaker and speaker.isupper() and not speaker[0].isdigit():
+                current = speaker
+                speakers.setdefault(current, []).append(remainder)
+                continue
+        if current:
+            speakers[current][-1] += ' ' + line
     return speakers
 
 

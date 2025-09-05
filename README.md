@@ -4,10 +4,11 @@ This repository contains a minimal example of a retrieval-augmented generation (
 
 ## Usage
 
-1. Place `.txt` or `.docx` files in your own directory (e.g. `docs/`). Each line should begin with the speaker name followed by a colon, for example:
+1. Place `.txt` or `.docx` files in your own directory (e.g. `docs/`). Each line should begin with the speaker name followed by a colon or a period, for example:
 ```
 Alice: Sveikas, tai yra tekstinis dokumentas.
 Bob: Sveikas, aš Bobas.
+PIRMININKAS (S. SKVERNELIS). Labas rytas.
 ```
 2. Run the script:
 ```
