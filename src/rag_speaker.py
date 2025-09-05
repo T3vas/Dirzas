@@ -20,12 +20,13 @@ def load_text(path: str) -> str:
         with zipfile.ZipFile(path) as z:
             xml_content = z.read('word/document.xml')
         tree = ET.fromstring(xml_content)
-        texts = [
-            node.text
-            for node in tree.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')
-            if node.text
-        ]
-        return '\n'.join(texts)
+        ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+        paragraphs = []
+        for p in tree.iter(f'{ns}p'):
+            texts = [node.text for node in p.iter(f'{ns}t') if node.text]
+            if texts:
+                paragraphs.append(''.join(texts))
+        return '\n'.join(paragraphs)
     raise ValueError(f"Unsupported file type: {path}")
 
 
@@ -52,27 +53,31 @@ def parse_speakers(text: str) -> Dict[str, List[str]]:
         PIRMININKAS: Sveiki.
         V. ALEKNAVIČIENĖ (LSDPF*). Labas.
 
-    Everything until the final ``:`` or ``.`` is treated as the speaker
-    name, which allows names containing dots, spaces or parentheses. Lines
-    that do not match this pattern are appended to the current speaker's
-    last segment.
+    ``parse_speakers`` is careful not to split inside initials such as
+    ``V. ALEKNAVIČIENĖ`` by selecting the first ``:`` or ``.`` whose
+    succeeding text does not start with another all-caps word. Lines that
+    do not match this pattern are appended to the current speaker's last
+    segment.
     """
 
-    pattern = re.compile(r"^(.*)[\.:]\s*(.*)$")
     speakers: Dict[str, List[str]] = {}
     current = None
     for raw_line in text.splitlines():
         line = raw_line.strip()
-        match = pattern.match(line)
-        if match:
-            speaker = match.group(1).strip()
-            remainder = match.group(2).strip()
-            # Accept only all–caps names to avoid matching timestamps etc.
+        found = False
+        for match in re.finditer(r"[\.:]", line):
+            speaker = line[:match.start()].strip()
+            remainder = line[match.end():].strip()
             if speaker and speaker.isupper() and not speaker[0].isdigit():
+                words = remainder.split()
+                if words and words[0].isupper():
+                    # Likely an initial, keep searching
+                    continue
                 current = speaker
                 speakers.setdefault(current, []).append(remainder)
-                continue
-        if current:
+                found = True
+                break
+        if not found and current:
             speakers[current][-1] += ' ' + line
     return speakers
 
