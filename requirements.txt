@@ -1,2 +1,3 @@
 gradio
-youtube-transcript-api
+openai-whisper
+yt-dlp
