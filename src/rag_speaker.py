@@ -2,9 +2,11 @@ import argparse
 import json
 import os
 import re
+import tempfile
 import zipfile
 from collections import Counter
 from math import sqrt
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
@@ -229,187 +231,132 @@ def fetch_youtube_metadata(url: str) -> Tuple[str, str, Optional[str], Optional[
 
 
 _DEFAULT_TRANSCRIPT_LANGS = ['lt', 'lt-LT', 'en', 'en-US']
+_DEFAULT_WHISPER_MODEL = os.environ.get('WHISPER_MODEL', 'large')
+_WHISPER_MODEL_INSTANCE: Optional[Any] = None
+
+
+def _load_whisper_model() -> Any:
+    global _WHISPER_MODEL_INSTANCE
+
+    if _WHISPER_MODEL_INSTANCE is None:
+        try:
+            import whisper  # type: ignore
+        except ImportError as exc:  # pragma: no cover - defensive
+            raise RuntimeError(
+                'openai-whisper paketas būtinas Whisper transkripcijai',
+            ) from exc
+
+        try:
+            _WHISPER_MODEL_INSTANCE = whisper.load_model(_DEFAULT_WHISPER_MODEL)
+        except Exception as exc:  # pragma: no cover - model loading is external
+            raise RuntimeError(
+                'Nepavyko įkelti Whisper modelio '
+                f"'{_DEFAULT_WHISPER_MODEL}': {exc}",
+            ) from exc
+
+    return _WHISPER_MODEL_INSTANCE
+
+
+def _normalise_language_code(code: str) -> Optional[str]:
+    cleaned = code.strip().replace('_', '-').lower()
+    if not cleaned:
+        return None
+    if '-' in cleaned:
+        cleaned = cleaned.split('-')[0]
+    if len(cleaned) != 2 or not cleaned.isalpha():
+        return None
+    return cleaned
 
 
 def fetch_youtube_transcript(video_id: str, languages: Optional[List[str]] = None) -> List[str]:
-    """Download transcript segments for ``video_id`` using YouTube's API."""
+    """Download audio for ``video_id`` and transcribe it with Whisper."""
 
     try:
-        from youtube_transcript_api import (  # type: ignore
-            NoTranscriptFound,
-            TranscriptsDisabled,
-            VideoUnavailable,
-            YouTubeTranscriptApi,
-        )
-        import youtube_transcript_api as _yt_module  # type: ignore
+        import yt_dlp  # type: ignore
     except ImportError as exc:  # pragma: no cover - defensive
-        raise RuntimeError('youtube-transcript-api package is required') from exc
+        raise RuntimeError('yt-dlp paketas būtinas Whisper transkripcijai') from exc
 
-    langs = languages or _DEFAULT_TRANSCRIPT_LANGS
-    api_instance: Optional[Any] = None
-    _RAISE_IF_MISSING = object()
+    url = f'https://www.youtube.com/watch?v={video_id}'
+    result: Dict[str, Any] = {}
 
-    def _call_api(
-        method: str,
-        *args: Any,
-        default: Any = _RAISE_IF_MISSING,
-        **kwargs: Any,
-    ) -> Any:
-        nonlocal api_instance
+    with tempfile.TemporaryDirectory() as tmpdir:
+        output_template = os.path.join(tmpdir, '%(id)s.%(ext)s')
+        ydl_opts = {
+            'outtmpl': output_template,
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'no_warnings': True,
+        }
 
-        last_type_error: Optional[TypeError] = None
-        attempted_call = False
-        needs_instance = False
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                candidates: List[str] = []
 
-        attr = getattr(YouTubeTranscriptApi, method, None)
-        if callable(attr):
-            attempted_call = True
-            try:
-                return attr(*args, **kwargs)
-            except TypeError as exc:
-                if 'self' in str(exc):
-                    needs_instance = True
-                else:
-                    last_type_error = exc
-        else:
-            needs_instance = True
+                requested = info.get('requested_downloads') or []
+                for entry in requested:
+                    for key in ('filepath', '_filename'):
+                        path = entry.get(key)
+                        if path and os.path.exists(path):
+                            candidates.append(path)
 
-        module_attr = getattr(_yt_module, method, None)
-        if callable(module_attr):
-            attempted_call = True
-            try:
-                return module_attr(*args, **kwargs)
-            except TypeError as exc:
-                last_type_error = exc
+                prepared = ydl.prepare_filename(info)
+                if os.path.exists(prepared):
+                    candidates.append(prepared)
 
-        if needs_instance and api_instance is None:
-            try:
-                api_instance = YouTubeTranscriptApi()  # type: ignore[call-arg]
-            except TypeError as exc:
-                raise RuntimeError(
-                    'Nesuderinama youtube-transcript-api versija: '
-                    'nepavyko inicijuoti API kliento.',
-                ) from exc
+                for key in ('_filename', 'filename'):
+                    path = info.get(key)
+                    if path and os.path.exists(path):
+                        candidates.append(path)
 
-        if api_instance is not None:
-            inst_attr = getattr(api_instance, method, None)
-            if callable(inst_attr):
-                attempted_call = True
-                try:
-                    return inst_attr(*args, **kwargs)
-                except TypeError as exc:
-                    last_type_error = exc
+                if not candidates:
+                    base = info.get('id') or video_id
+                    for file in Path(tmpdir).glob(f"{base}.*"):
+                        if file.is_file():
+                            candidates.append(str(file))
 
-        if default is not _RAISE_IF_MISSING:
-            if last_type_error is not None and attempted_call:
-                raise RuntimeError(
-                    'Nesuderinama youtube-transcript-api versija: '
-                    f"metodo '{method}' iškvietimas nepavyko: {last_type_error}",
-                ) from last_type_error
-            return default
+                audio_path: Optional[str] = None
+                for candidate in candidates:
+                    if os.path.exists(candidate):
+                        audio_path = candidate
+                        break
 
-        if last_type_error is not None and attempted_call:
+                if audio_path is None:
+                    raise RuntimeError('Nepavyko rasti atsisiųsto garso failo')
+        except Exception as exc:
+            raise RuntimeError('Nepavyko atsisiųsti YouTube garso įrašo: ' + str(exc)) from exc
+
+        model = _load_whisper_model()
+
+        language_hint: Optional[str] = None
+        for lang in (languages or _DEFAULT_TRANSCRIPT_LANGS):
+            normalised = _normalise_language_code(lang)
+            if normalised:
+                language_hint = normalised
+                break
+
+        transcribe_kwargs: Dict[str, Any] = {'fp16': False}
+        if language_hint is not None:
+            transcribe_kwargs['language'] = language_hint
+
+        try:
+            result = model.transcribe(audio_path, **transcribe_kwargs)
+        except Exception as exc:  # pragma: no cover - whisper handles the heavy lifting
             raise RuntimeError(
-                'Nesuderinama youtube-transcript-api versija: '
-                f"metodo '{method}' iškvietimas nepavyko: {last_type_error}",
-            ) from last_type_error
-
-        raise RuntimeError(
-            'Nesuderinama youtube-transcript-api versija: '
-            f"nerastas metodas '{method}'.",
-        )
-
-    def _fetch_from_list(transcript_list: Any) -> List[Dict[str, Any]]:
-        search_methods = [
-            'find_transcript',
-            'find_manually_created_transcript',
-            'find_generated_transcript',
-        ]
-        for name in search_methods:
-            finder = getattr(transcript_list, name, None)
-            if not callable(finder):
-                continue
-            try:
-                transcript = finder(langs)
-            except NoTranscriptFound:
-                continue
-            except TypeError:
-                continue
-            try:
-                return transcript.fetch()
-            except Exception:
-                continue
-
-        transcripts_iterable: List[Any] = []
-        try:
-            transcripts_iterable = list(transcript_list)
-        except TypeError:
-            transcripts_iterable = []
-
-        for transcript in transcripts_iterable:
-            try:
-                if getattr(transcript, 'language_code', None) in langs:
-                    return transcript.fetch()
-            except Exception:
-                continue
-
-        for transcript in transcripts_iterable:
-            if not getattr(transcript, 'is_translatable', False):
-                continue
-            for lang in langs:
-                try:
-                    translated = transcript.translate(lang)
-                except Exception:
-                    continue
-                try:
-                    return translated.fetch()
-                except Exception:
-                    continue
-
-        for transcript in transcripts_iterable:
-            try:
-                return transcript.fetch()
-            except Exception:
-                continue
-
-        raise NoTranscriptFound()
-
-    missing_marker = object()
-    try:
-        transcript_list = _call_api(
-            'list_transcripts',
-            video_id,
-            default=missing_marker,
-        )
-    except TranscriptsDisabled as exc:
-        raise ValueError('Transkripsijos yra išjungtos šiam vaizdo įrašui') from exc
-    except VideoUnavailable as exc:
-        raise ValueError('Vaizdo įrašas nepasiekiamas arba ištrintas') from exc
-    except RuntimeError as exc:
-        raise RuntimeError('Nepavyko nuskaityti YouTube transkripcijos: ' + str(exc)) from exc
-
-    if transcript_list is missing_marker:
-        try:
-            entries = _call_api('get_transcript', video_id, languages=langs)
-        except TranscriptsDisabled as exc:
-            raise ValueError('Transkripsijos yra išjungtos šiam vaizdo įrašui') from exc
-        except VideoUnavailable as exc:
-            raise ValueError('Vaizdo įrašas nepasiekiamas arba ištrintas') from exc
-        except NoTranscriptFound as exc:
-            raise ValueError('Transkripcija nerasta šiam vaizdo įrašui') from exc
-        except RuntimeError as exc:
-            raise RuntimeError('Nepavyko nuskaityti YouTube transkripcijos: ' + str(exc)) from exc
-    else:
-        try:
-            entries = _fetch_from_list(transcript_list)
-        except NoTranscriptFound as exc:
-            raise ValueError('Transkripcija nerasta šiam vaizdo įrašui') from exc
+                'Nepavyko transkribuoti vaizdo įrašo naudojant Whisper: ' + str(exc),
+            ) from exc
 
     segments: List[str] = []
-    for item in entries:
-        text = item.get('text', '').replace('\n', ' ').strip()
+    for segment in result.get('segments', []):
+        text = segment.get('text', '').replace('\n', ' ').strip()
         if text:
             segments.append(text)
+
+    if not segments:
+        full_text = result.get('text', '').strip()
+        if full_text:
+            segments.append(full_text)
+
     return segments
 
 
