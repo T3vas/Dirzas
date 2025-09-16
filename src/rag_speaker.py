@@ -5,7 +5,7 @@ import re
 import zipfile
 from collections import Counter
 from math import sqrt
-from typing import Dict, List
+from typing import Dict, List, Optional
 from urllib.request import Request, urlopen
 
 import xml.etree.ElementTree as ET
@@ -80,6 +80,36 @@ def parse_speakers(text: str) -> Dict[str, List[str]]:
         if not found and current:
             speakers[current][-1] += ' ' + line
     return speakers
+
+
+_DATE_PATTERNS = [
+    re.compile(
+        r"\b\d{4}\s*m\.\s*[A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž]+(?:\s+[A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž]+)*\s+\d{1,2}\s*d\.?",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b"),
+]
+
+
+def extract_document_date(text: str, max_lines: int = 40) -> Optional[str]:
+    """Return the first date-like string found near the start of ``text``."""
+
+    lines = text.splitlines()[:max_lines]
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        for pattern in _DATE_PATTERNS:
+            match = pattern.search(line)
+            if not match:
+                continue
+            found = match.group(0).strip().rstrip(',;')
+            if pattern is _DATE_PATTERNS[1]:
+                parts = re.split(r"[-/.]", found)
+                year, month, day = parts[0], int(parts[1]), int(parts[2])
+                return f"{year}-{month:02d}-{day:02d}"
+            return ' '.join(found.split())
+    return None
 
 
 class SpeakerRAG:
