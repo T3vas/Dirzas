@@ -5,7 +5,8 @@ import re
 import zipfile
 from collections import Counter
 from math import sqrt
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
+from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 
 import xml.etree.ElementTree as ET
@@ -163,6 +164,107 @@ def call_ollama(model: str, prompt: str, url: str = 'http://localhost:11434/api/
         return ''.join(parts)
     except Exception as exc:
         return f"[Ollama error: {exc}]"
+
+
+def extract_youtube_video_id(url: str) -> str:
+    """Return the 11-character video ID from a YouTube URL or ID string."""
+
+    candidate = url.strip()
+    if not candidate:
+        raise ValueError('YouTube URL is empty')
+
+    parsed = urlparse(candidate)
+    if parsed.scheme and parsed.netloc:
+        host = parsed.netloc.lower()
+        path = parsed.path
+        if host in {'youtu.be', 'www.youtu.be'}:
+            video_id = path.lstrip('/')
+        elif 'youtube.com' in host:
+            if path == '/watch':
+                query = parse_qs(parsed.query)
+                ids = query.get('v', [])
+                video_id = ids[0] if ids else ''
+            elif path.startswith('/shorts/') or path.startswith('/embed/'):
+                parts = path.split('/')
+                video_id = parts[2] if len(parts) > 2 else ''
+            else:
+                video_id = ''
+        else:
+            video_id = ''
+    else:
+        video_id = candidate
+
+    if not re.fullmatch(r'[A-Za-z0-9_-]{11}', video_id or ''):
+        raise ValueError('Unable to extract video ID from URL')
+    return video_id
+
+
+def fetch_youtube_metadata(url: str) -> Tuple[str, str, Optional[str], Optional[str]]:
+    """Retrieve the video ID, title and optional date extracted from the title."""
+
+    video_id = extract_youtube_video_id(url)
+    title = video_id
+    date_label: Optional[str] = None
+    warning: Optional[str] = None
+    oembed_url = (
+        'https://www.youtube.com/oembed?format=json&url='
+        + quote(url, safe=':/?=&')
+    )
+
+    try:
+        req = Request(
+            oembed_url,
+            headers={'User-Agent': 'Mozilla/5.0'},
+        )
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+        fetched_title = data.get('title')
+        if fetched_title:
+            title = fetched_title.strip()
+        date_label = extract_document_date(title)
+    except Exception as exc:
+        warning = f'Nepavyko gauti vaizdo įrašo pavadinimo: {exc}'
+
+    return video_id, title, date_label, warning
+
+
+_DEFAULT_TRANSCRIPT_LANGS = ['lt', 'lt-LT', 'en', 'en-US']
+
+
+def fetch_youtube_transcript(video_id: str, languages: Optional[List[str]] = None) -> List[str]:
+    """Download transcript segments for ``video_id`` using YouTube's API."""
+
+    try:
+        from youtube_transcript_api import (  # type: ignore
+            NoTranscriptFound,
+            TranscriptsDisabled,
+            VideoUnavailable,
+            YouTubeTranscriptApi,
+        )
+    except ImportError as exc:  # pragma: no cover - defensive
+        raise RuntimeError('youtube-transcript-api package is required') from exc
+
+    langs = languages or _DEFAULT_TRANSCRIPT_LANGS
+    try:
+        entries = YouTubeTranscriptApi.get_transcript(video_id, languages=langs)
+    except TranscriptsDisabled as exc:
+        raise ValueError('Transkripsijos yra išjungtos šiam vaizdo įrašui') from exc
+    except VideoUnavailable as exc:
+        raise ValueError('Vaizdo įrašas nepasiekiamas arba ištrintas') from exc
+    except NoTranscriptFound:
+        try:
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript = transcript_list.find_transcript(langs)
+            entries = transcript.fetch()
+        except Exception as exc:  # pragma: no cover - fallback path
+            raise ValueError('Transkripcija nerasta šiam vaizdo įrašui') from exc
+
+    segments: List[str] = []
+    for item in entries:
+        text = item.get('text', '').replace('\n', ' ').strip()
+        if text:
+            segments.append(text)
+    return segments
 
 
 def main() -> None:

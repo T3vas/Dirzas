@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import gradio as gr
 import json
@@ -8,6 +8,8 @@ from rag_speaker import (
     SpeakerRAG,
     call_ollama,
     extract_document_date,
+    fetch_youtube_metadata,
+    fetch_youtube_transcript,
     load_text,
     parse_speakers,
 )
@@ -130,6 +132,67 @@ def save_settings(url: str, model: str) -> str:
         json.dump({'ollama_url': ollama_url, 'model_name': model_name}, f)
     return 'Settings saved'
 
+
+def _current_choices(selected_speaker: Optional[str] = None, selected_date: Optional[str] = None):
+    speakers = sorted(rag.corpora.keys())
+    dates = sorted(date_rag.corpora.keys())
+    speaker_value = selected_speaker if selected_speaker in speakers else None
+    date_value = selected_date if selected_date in dates else None
+    return (
+        gr.Dropdown(choices=speakers, value=speaker_value),
+        ', '.join(speakers),
+        gr.Dropdown(choices=dates, value=date_value),
+        ', '.join(dates),
+    )
+
+
+def ingest_youtube(url: str):
+    url = (url or '').strip()
+    if not url:
+        dropdowns = _current_choices()
+        return (*dropdowns, 'Įveskite YouTube nuorodą')
+
+    try:
+        video_id, title, date_label, warning = fetch_youtube_metadata(url)
+    except ValueError as exc:
+        dropdowns = _current_choices()
+        return (*dropdowns, str(exc))
+
+    try:
+        segments = fetch_youtube_transcript(video_id)
+    except Exception as exc:
+        dropdowns = _current_choices()
+        return (*dropdowns, str(exc))
+
+    if not segments:
+        dropdowns = _current_choices()
+        return (*dropdowns, 'Transkripcija tuščia')
+
+    speaker_label = f'YouTube {video_id}: {title}'
+    if speaker_label in rag.corpora:
+        dropdowns = _current_choices(speaker_label, date_label or UNKNOWN_DATE_LABEL)
+        message = f"Vaizdo įrašas '{title}' jau pridėtas"
+        if warning:
+            message += f'. {warning}'
+        return (*dropdowns, message)
+
+    rag.add_speaker(speaker_label, segments)
+    date_key = date_label or UNKNOWN_DATE_LABEL
+    existing_date = date_rag.corpora.get(date_key, [])
+    date_rag.add_speaker(date_key, existing_date + segments)
+
+    dropdowns = _current_choices(speaker_label, date_key)
+    message = (
+        f"Pridėtas YouTube vaizdo įrašas '{title}' ({len(segments)} segmentų)."
+    )
+    if date_label:
+        message += f" Data iš pavadinimo: {date_label}."
+    else:
+        message += ' Data nenustatyta, priskirta prie "Nežinoma data".'
+    if warning:
+        message += f' Įspėjimas: {warning}.'
+    return (*dropdowns, message)
+
 with gr.Blocks() as demo:
     gr.Markdown('# RAG Web UI')
     with gr.Tab('Chat'):
@@ -151,6 +214,15 @@ with gr.Blocks() as demo:
         speakers_box = gr.Textbox(label='Known speakers', interactive=False)
         dates_box = gr.Textbox(label='Known dates', interactive=False)
         upload_btn.click(upload_fn, [file_input], [speaker_dd, speakers_box, date_dd, dates_box])
+    with gr.Tab('YouTube'):
+        youtube_url = gr.Textbox(label='YouTube URL')
+        youtube_btn = gr.Button('Transcribe video')
+        youtube_status = gr.Textbox(label='Status', interactive=False)
+        youtube_btn.click(
+            ingest_youtube,
+            [youtube_url],
+            [speaker_dd, speakers_box, date_dd, dates_box, youtube_status],
+        )
     with gr.Tab('Settings'):
         url_box = gr.Textbox(label='Ollama URL', value=ollama_url)
         model_box = gr.Textbox(label='LLM Model', value=model_name)
