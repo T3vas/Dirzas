@@ -241,6 +241,7 @@ def fetch_youtube_transcript(video_id: str, languages: Optional[List[str]] = Non
             VideoUnavailable,
             YouTubeTranscriptApi,
         )
+        import youtube_transcript_api as _yt_module  # type: ignore
     except ImportError as exc:  # pragma: no cover - defensive
         raise RuntimeError('youtube-transcript-api package is required') from exc
 
@@ -256,15 +257,32 @@ def fetch_youtube_transcript(video_id: str, languages: Optional[List[str]] = Non
     ) -> Any:
         nonlocal api_instance
 
+        last_type_error: Optional[TypeError] = None
+        attempted_call = False
+        needs_instance = False
+
         attr = getattr(YouTubeTranscriptApi, method, None)
         if callable(attr):
+            attempted_call = True
             try:
                 return attr(*args, **kwargs)
             except TypeError as exc:
-                if 'self' not in str(exc):
-                    raise
+                if 'self' in str(exc):
+                    needs_instance = True
+                else:
+                    last_type_error = exc
+        else:
+            needs_instance = True
 
-        if api_instance is None:
+        module_attr = getattr(_yt_module, method, None)
+        if callable(module_attr):
+            attempted_call = True
+            try:
+                return module_attr(*args, **kwargs)
+            except TypeError as exc:
+                last_type_error = exc
+
+        if needs_instance and api_instance is None:
             try:
                 api_instance = YouTubeTranscriptApi()  # type: ignore[call-arg]
             except TypeError as exc:
@@ -273,12 +291,28 @@ def fetch_youtube_transcript(video_id: str, languages: Optional[List[str]] = Non
                     'nepavyko inicijuoti API kliento.',
                 ) from exc
 
-        inst_attr = getattr(api_instance, method, None)
-        if callable(inst_attr):
-            return inst_attr(*args, **kwargs)
+        if api_instance is not None:
+            inst_attr = getattr(api_instance, method, None)
+            if callable(inst_attr):
+                attempted_call = True
+                try:
+                    return inst_attr(*args, **kwargs)
+                except TypeError as exc:
+                    last_type_error = exc
 
         if default is not _RAISE_IF_MISSING:
+            if last_type_error is not None and attempted_call:
+                raise RuntimeError(
+                    'Nesuderinama youtube-transcript-api versija: '
+                    f"metodo '{method}' iškvietimas nepavyko: {last_type_error}",
+                ) from last_type_error
             return default
+
+        if last_type_error is not None and attempted_call:
+            raise RuntimeError(
+                'Nesuderinama youtube-transcript-api versija: '
+                f"metodo '{method}' iškvietimas nepavyko: {last_type_error}",
+            ) from last_type_error
 
         raise RuntimeError(
             'Nesuderinama youtube-transcript-api versija: '
