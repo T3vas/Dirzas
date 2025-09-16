@@ -5,7 +5,7 @@ import re
 import zipfile
 from collections import Counter
 from math import sqrt
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.request import Request, urlopen
 
@@ -245,15 +245,48 @@ def fetch_youtube_transcript(video_id: str, languages: Optional[List[str]] = Non
         raise RuntimeError('youtube-transcript-api package is required') from exc
 
     langs = languages or _DEFAULT_TRANSCRIPT_LANGS
+    api_instance: Optional[Any] = None
+
+    def _call_api(method: str, *args: Any, **kwargs: Any) -> Any:
+        nonlocal api_instance
+
+        attr = getattr(YouTubeTranscriptApi, method, None)
+        if callable(attr):
+            try:
+                return attr(*args, **kwargs)
+            except TypeError as exc:
+                if 'self' not in str(exc):
+                    raise
+
+        if api_instance is None:
+            try:
+                api_instance = YouTubeTranscriptApi()  # type: ignore[call-arg]
+            except TypeError as exc:
+                raise RuntimeError(
+                    'Nesuderinama youtube-transcript-api versija: '
+                    'nepavyko inicijuoti API kliento.',
+                ) from exc
+
+        inst_attr = getattr(api_instance, method, None)
+        if callable(inst_attr):
+            return inst_attr(*args, **kwargs)
+
+        raise RuntimeError(
+            'Nesuderinama youtube-transcript-api versija: '
+            f"nerastas metodas '{method}'.",
+        )
+
     try:
-        entries = YouTubeTranscriptApi.get_transcript(video_id, languages=langs)
+        entries = _call_api('get_transcript', video_id, languages=langs)
     except TranscriptsDisabled as exc:
         raise ValueError('Transkripsijos yra išjungtos šiam vaizdo įrašui') from exc
     except VideoUnavailable as exc:
         raise ValueError('Vaizdo įrašas nepasiekiamas arba ištrintas') from exc
+    except RuntimeError as exc:
+        raise RuntimeError('Nepavyko nuskaityti YouTube transkripcijos: ' + str(exc)) from exc
     except NoTranscriptFound:
         try:
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript_list = _call_api('list_transcripts', video_id)
             transcript = transcript_list.find_transcript(langs)
             entries = transcript.fetch()
         except Exception as exc:  # pragma: no cover - fallback path
