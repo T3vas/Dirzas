@@ -246,8 +246,14 @@ def fetch_youtube_transcript(video_id: str, languages: Optional[List[str]] = Non
 
     langs = languages or _DEFAULT_TRANSCRIPT_LANGS
     api_instance: Optional[Any] = None
+    _RAISE_IF_MISSING = object()
 
-    def _call_api(method: str, *args: Any, **kwargs: Any) -> Any:
+    def _call_api(
+        method: str,
+        *args: Any,
+        default: Any = _RAISE_IF_MISSING,
+        **kwargs: Any,
+    ) -> Any:
         nonlocal api_instance
 
         attr = getattr(YouTubeTranscriptApi, method, None)
@@ -271,25 +277,98 @@ def fetch_youtube_transcript(video_id: str, languages: Optional[List[str]] = Non
         if callable(inst_attr):
             return inst_attr(*args, **kwargs)
 
+        if default is not _RAISE_IF_MISSING:
+            return default
+
         raise RuntimeError(
             'Nesuderinama youtube-transcript-api versija: '
             f"nerastas metodas '{method}'.",
         )
 
+    def _fetch_from_list(transcript_list: Any) -> List[Dict[str, Any]]:
+        search_methods = [
+            'find_transcript',
+            'find_manually_created_transcript',
+            'find_generated_transcript',
+        ]
+        for name in search_methods:
+            finder = getattr(transcript_list, name, None)
+            if not callable(finder):
+                continue
+            try:
+                transcript = finder(langs)
+            except NoTranscriptFound:
+                continue
+            except TypeError:
+                continue
+            try:
+                return transcript.fetch()
+            except Exception:
+                continue
+
+        transcripts_iterable: List[Any] = []
+        try:
+            transcripts_iterable = list(transcript_list)
+        except TypeError:
+            transcripts_iterable = []
+
+        for transcript in transcripts_iterable:
+            try:
+                if getattr(transcript, 'language_code', None) in langs:
+                    return transcript.fetch()
+            except Exception:
+                continue
+
+        for transcript in transcripts_iterable:
+            if not getattr(transcript, 'is_translatable', False):
+                continue
+            for lang in langs:
+                try:
+                    translated = transcript.translate(lang)
+                except Exception:
+                    continue
+                try:
+                    return translated.fetch()
+                except Exception:
+                    continue
+
+        for transcript in transcripts_iterable:
+            try:
+                return transcript.fetch()
+            except Exception:
+                continue
+
+        raise NoTranscriptFound()
+
+    missing_marker = object()
     try:
-        entries = _call_api('get_transcript', video_id, languages=langs)
+        transcript_list = _call_api(
+            'list_transcripts',
+            video_id,
+            default=missing_marker,
+        )
     except TranscriptsDisabled as exc:
         raise ValueError('Transkripsijos yra išjungtos šiam vaizdo įrašui') from exc
     except VideoUnavailable as exc:
         raise ValueError('Vaizdo įrašas nepasiekiamas arba ištrintas') from exc
     except RuntimeError as exc:
         raise RuntimeError('Nepavyko nuskaityti YouTube transkripcijos: ' + str(exc)) from exc
-    except NoTranscriptFound:
+
+    if transcript_list is missing_marker:
         try:
-            transcript_list = _call_api('list_transcripts', video_id)
-            transcript = transcript_list.find_transcript(langs)
-            entries = transcript.fetch()
-        except Exception as exc:  # pragma: no cover - fallback path
+            entries = _call_api('get_transcript', video_id, languages=langs)
+        except TranscriptsDisabled as exc:
+            raise ValueError('Transkripsijos yra išjungtos šiam vaizdo įrašui') from exc
+        except VideoUnavailable as exc:
+            raise ValueError('Vaizdo įrašas nepasiekiamas arba ištrintas') from exc
+        except NoTranscriptFound as exc:
+            raise ValueError('Transkripcija nerasta šiam vaizdo įrašui') from exc
+        except RuntimeError as exc:
+            raise RuntimeError('Nepavyko nuskaityti YouTube transkripcijos: ' + str(exc)) from exc
+    else:
+        try:
+            entries = _fetch_from_list(transcript_list)
+        except NoTranscriptFound as exc:
             raise ValueError('Transkripcija nerasta šiam vaizdo įrašui') from exc
 
     segments: List[str] = []
