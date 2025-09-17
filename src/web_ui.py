@@ -1,5 +1,6 @@
 from typing import List, Optional, Tuple
 
+import inspect
 import json
 import re
 import unicodedata
@@ -36,6 +37,14 @@ if CONFIG_PATH.exists():
         data = json.load(f)
         ollama_url = data.get('ollama_url', DEFAULT_URL)
         model_name = data.get('model_name', DEFAULT_MODEL)
+
+
+_HTML_COMPONENT_KWARGS = {}
+try:
+    if 'sanitize_html' in inspect.signature(gr.HTML.__init__).parameters:
+        _HTML_COMPONENT_KWARGS['sanitize_html'] = False
+except (TypeError, ValueError):
+    pass
 
 
 _LT_MONTHS = {
@@ -797,7 +806,8 @@ with gr.Blocks() as demo:
     with gr.Tab('Date Chat'):
         with gr.Row():
             calendar_html = gr.HTML(
-                value=_render_calendar_html([], None, None), sanitize_html=False
+                value=_render_calendar_html([], None, None),
+                **_HTML_COMPONENT_KWARGS,
             )
             with gr.Column():
                 date_start_value = gr.Textbox(
