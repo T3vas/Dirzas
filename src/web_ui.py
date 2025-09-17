@@ -796,7 +796,9 @@ with gr.Blocks() as demo:
         msg.submit(chat_fn, [chatbot, msg, speaker_dd], [chatbot, msg])
     with gr.Tab('Date Chat'):
         with gr.Row():
-            calendar_html = gr.HTML(value=_render_calendar_html([], None, None))
+            calendar_html = gr.HTML(
+                value=_render_calendar_html([], None, None), sanitize_html=False
+            )
             with gr.Column():
                 date_start_value = gr.Textbox(
                     label='Selected start date',
