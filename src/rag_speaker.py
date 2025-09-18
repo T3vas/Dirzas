@@ -87,7 +87,7 @@ def parse_speakers(text: str) -> Dict[str, List[str]]:
 
 _DATE_PATTERNS = [
     re.compile(
-        r"\b\d{4}\s*m\.\s*[A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž]+(?:\s+[A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž]+)*\s+\d{1,2}\s*d\.?",
+        r"\b\d{4}\s*m\.\s*[A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž]+(?:\s+[A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž]+)*\s+\d{1,2}(?:\s*d\.?)?",
         re.IGNORECASE,
     ),
     re.compile(r"\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}\b"),

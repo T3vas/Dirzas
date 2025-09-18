@@ -93,7 +93,7 @@ def _parse_date_label(label: str) -> Optional[dt_date]:
         pass
 
     match = re.search(
-        r'(\d{4})\s*m\.\s*([A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž\s\.]*)\s+(\d{1,2})\s*d\.?',
+        r'(\d{4})\s*m\.\s*([A-Za-zĄČĘĖĮŠŲŪŽąčęėįšųūž\s\.]*)\s+(\d{1,2})(?:\s*d\.?)?',
         cleaned,
         re.IGNORECASE,
     )
